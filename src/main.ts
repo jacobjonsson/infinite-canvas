@@ -7,6 +7,8 @@ const canvasContext = elCanvas.getContext("2d") as CanvasRenderingContext2D;
 elCanvas.width = elCanvas.offsetWidth;
 elCanvas.height = elCanvas.offsetHeight;
 
+const CELL_SIZE = 64;
+
 const FRAME_HEIGHT = 200;
 const FRAME_WIDTH = 200;
 
@@ -22,7 +24,9 @@ interface CanvasMachineContext {
   width: number;
   height: number;
   images: Frame[];
+  dragStart: DOMPoint;
   generationFrame: Omit<Frame, "image">;
+  oldGenerationFrame: Omit<Frame, "image">;
   transform: DOMMatrixReadOnly;
 }
 
@@ -35,7 +39,9 @@ const machine = createMachine<CanvasMachineContext>(
       width: elCanvas.width,
       height: elCanvas.height,
       images: [],
+      dragStart: new DOMPoint(),
       generationFrame: { x: 0, y: 0, width: FRAME_WIDTH, height: FRAME_HEIGHT },
+      oldGenerationFrame: { x: 0, y: 0, width: FRAME_WIDTH, height: FRAME_HEIGHT },
       transform: new DOMMatrixReadOnly(),
     },
     on: {
@@ -89,6 +95,7 @@ const machine = createMachine<CanvasMachineContext>(
               ],
               mousedown: {
                 target: "#canvas.dragging",
+                actions: ["setDragStart", "copyGenerationFrame"],
               },
             },
           },
@@ -158,6 +165,15 @@ const machine = createMachine<CanvasMachineContext>(
       setGrabbingCursor: (_) => {
         elCanvas.style.cursor = "grabbing";
       },
+      setDragStart: assign((ctx, evt) => {
+        if (!isMouseDownEvent(evt)) {
+          return { dragStart: ctx.dragStart };
+        }
+
+        const transformedCursor = ctx.transform.inverse().transformPoint(new DOMPoint(evt.pageX, evt.pageY));
+
+        return { dragStart: transformedCursor };
+      }),
       generate: assign((ctx) => {
         const { x, y, width, height } = ctx.generationFrame;
         const image = new Image();
@@ -171,15 +187,30 @@ const machine = createMachine<CanvasMachineContext>(
         };
         return { images: [...ctx.images, imageFrame] };
       }),
+      copyGenerationFrame: assign((ctx) => {
+        return { oldGenerationFrame: ctx.generationFrame };
+      }),
       updateGenerationFrame: assign((ctx, evt) => {
         if (!isMouseMoveEvent(evt)) {
           return {};
         }
 
+        // This isn't working while zoomed in or out
+        const transformedCursor = ctx.transform.inverse().transformPoint(new DOMPoint(evt.pageX, evt.pageY));
+
+        const deltaX = transformedCursor.x - ctx.dragStart.x;
+        const deltaY = transformedCursor.y - ctx.dragStart.y;
+
+        let x: number = ctx.oldGenerationFrame.x + deltaX;
+        let y: number = ctx.oldGenerationFrame.y + deltaY;
+
+        x = Math.round(x / CELL_SIZE) * CELL_SIZE;
+        y = Math.round(y / CELL_SIZE) * CELL_SIZE;
+
         return {
           generationFrame: {
-            x: ctx.generationFrame.x + evt.movementX / ctx.transform.a,
-            y: ctx.generationFrame.y + evt.movementY / ctx.transform.d,
+            x: x / ctx.transform.a,
+            y: y / ctx.transform.d,
             width: FRAME_WIDTH,
             height: FRAME_HEIGHT,
           },
@@ -245,6 +276,10 @@ const machine = createMachine<CanvasMachineContext>(
   }
 );
 
+const isMouseDownEvent = (evt: AnyEventObject): evt is MouseEvent => {
+  return evt.type === "mousedown";
+};
+
 const isMouseMoveEvent = (evt: AnyEventObject): evt is MouseEvent => {
   return evt.type === "mousemove";
 };
@@ -267,7 +302,7 @@ const canvasService = interpret(machine).onTransition((state) => {
   canvasContext.strokeStyle = "#B8B8B8";
   canvasContext.lineWidth = 2;
   canvasContext.setLineDash([1, 32]);
-  for (let x = 0; x < state.context.width; x += 32) {
+  for (let x = 0; x < state.context.width; x += CELL_SIZE) {
     canvasContext.moveTo(x, 0);
     canvasContext.lineTo(x, state.context.height);
   }
