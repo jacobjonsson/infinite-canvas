@@ -10,9 +10,25 @@ body {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+
+  position: relative;
 }
 
 #canvas {
   width: 100%;
   height: 100%;
+}
+
+#toolbar {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 1px solid black;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+  background-color: black;
+}
+
+#toolbar > button {
+  padding: 8px;
 }

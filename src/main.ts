@@ -7,18 +7,22 @@ const canvasContext = elCanvas.getContext("2d") as CanvasRenderingContext2D;
 elCanvas.width = elCanvas.offsetWidth;
 elCanvas.height = elCanvas.offsetHeight;
 
+const FRAME_HEIGHT = 200;
+const FRAME_WIDTH = 200;
+
 interface Frame {
   x: number;
   y: number;
   width: number;
   height: number;
+  image: HTMLImageElement;
 }
 
 interface CanvasMachineContext {
   width: number;
   height: number;
   images: Frame[];
-  generationFrame: Frame;
+  generationFrame: Omit<Frame, "image">;
   transform: DOMMatrixReadOnly;
 }
 
@@ -31,7 +35,7 @@ const machine = createMachine<CanvasMachineContext>(
       width: elCanvas.width,
       height: elCanvas.height,
       images: [],
-      generationFrame: { x: 0, y: 0, width: 640, height: 640 },
+      generationFrame: { x: 0, y: 0, width: FRAME_WIDTH, height: FRAME_HEIGHT },
       transform: new DOMMatrixReadOnly(),
     },
     on: {
@@ -40,6 +44,9 @@ const machine = createMachine<CanvasMachineContext>(
     states: {
       idle: {
         on: {
+          GENERATE: {
+            actions: "generate",
+          },
           mousemove: [
             {
               cond: "isOverGenerationFrame",
@@ -135,6 +142,7 @@ const machine = createMachine<CanvasMachineContext>(
         evt.preventDefault();
       },
       updateSize: (_) => {
+        console.log("RESIZE!");
         elCanvas.width = elCanvas.offsetWidth;
         elCanvas.height = elCanvas.offsetHeight;
       },
@@ -150,6 +158,19 @@ const machine = createMachine<CanvasMachineContext>(
       setGrabbingCursor: (_) => {
         elCanvas.style.cursor = "grabbing";
       },
+      generate: assign((ctx) => {
+        const { x, y, width, height } = ctx.generationFrame;
+        const image = new Image();
+        image.src = `https://picsum.photos/${width}/${height}?random=${Math.random()}`;
+        const imageFrame: Frame = {
+          x,
+          y,
+          width,
+          height,
+          image,
+        };
+        return { images: [...ctx.images, imageFrame] };
+      }),
       updateGenerationFrame: assign((ctx, evt) => {
         if (!isMouseMoveEvent(evt)) {
           return {};
@@ -159,8 +180,8 @@ const machine = createMachine<CanvasMachineContext>(
           generationFrame: {
             x: ctx.generationFrame.x + evt.movementX / ctx.transform.a,
             y: ctx.generationFrame.y + evt.movementY / ctx.transform.d,
-            width: 640,
-            height: 640,
+            width: FRAME_WIDTH,
+            height: FRAME_HEIGHT,
           },
         };
       }),
@@ -233,53 +254,62 @@ const isWheelEvent = (evt: AnyEventObject): evt is WheelEvent => {
 };
 
 const canvasService = interpret(machine).onTransition((state) => {
-  if (!state.changed) return;
+  canvasContext.setTransform(1, 0, 0, 1, 0, 0);
+  canvasContext.fillStyle = "#575B6B";
+  canvasContext.fillRect(0, 0, elCanvas.width, elCanvas.height);
 
-  requestAnimationFrame(() => {
-    canvasContext.setTransform(1, 0, 0, 1, 0, 0);
-    canvasContext.fillStyle = "#575B6B";
-    canvasContext.fillRect(0, 0, state.context.width, state.context.height);
+  // Apply transformations without scaling for the grid
+  const gridTransform = state.context.transform.scale(1 / state.context.transform.a);
+  canvasContext.setTransform(gridTransform);
 
-    // Draw the dotted grid
-    canvasContext.beginPath();
-    canvasContext.strokeStyle = "#B8B8B8";
-    canvasContext.setLineDash([1, 32]);
-    for (let x = 0; x < state.context.width; x += 32) {
-      canvasContext.moveTo(x, 0);
-      canvasContext.lineTo(x, state.context.height);
-    }
-    canvasContext.stroke();
+  // Draw the dotted grid
+  canvasContext.beginPath();
+  canvasContext.strokeStyle = "#B8B8B8";
+  canvasContext.lineWidth = 2;
+  canvasContext.setLineDash([1, 32]);
+  for (let x = 0; x < state.context.width; x += 32) {
+    canvasContext.moveTo(x, 0);
+    canvasContext.lineTo(x, state.context.height);
+  }
+  canvasContext.stroke();
 
-    // Apply transformations
-    canvasContext.setTransform(state.context.transform);
+  canvasContext.setTransform(state.context.transform);
 
-    // Draw draggable box
-    canvasContext.setLineDash([]);
-    canvasContext.beginPath();
-    canvasContext.fillStyle = "rgba(255, 255, 255, 0.10)";
-    if (state.matches("idle.over") || state.matches("dragging")) {
-      canvasContext.strokeStyle = "red";
-    } else {
-      canvasContext.strokeStyle = "#4E69DE";
-    }
-    canvasContext.lineWidth = 1;
-    canvasContext.fillRect(
-      state.context.generationFrame.x,
-      state.context.generationFrame.y,
-      state.context.generationFrame.width,
-      state.context.generationFrame.height
-    );
-    canvasContext.strokeRect(
-      state.context.generationFrame.x,
-      state.context.generationFrame.y,
-      state.context.generationFrame.width,
-      state.context.generationFrame.height
-    );
-  });
+  // Draw images
+  for (const imageFrame of state.context.images) {
+    canvasContext.drawImage(imageFrame.image, imageFrame.x, imageFrame.y, imageFrame.width, imageFrame.height);
+  }
+
+  // Draw draggable box
+  canvasContext.setLineDash([]);
+  canvasContext.beginPath();
+  canvasContext.fillStyle = "rgba(255, 255, 255, 0.10)";
+  if (["idle.over", "dragging"].some(state.matches)) {
+    canvasContext.strokeStyle = "#3A51B5";
+  } else {
+    canvasContext.strokeStyle = "#4E69DE";
+  }
+  canvasContext.lineWidth = 1;
+  canvasContext.fillRect(
+    state.context.generationFrame.x,
+    state.context.generationFrame.y,
+    state.context.generationFrame.width,
+    state.context.generationFrame.height
+  );
+  canvasContext.strokeRect(
+    state.context.generationFrame.x,
+    state.context.generationFrame.y,
+    state.context.generationFrame.width,
+    state.context.generationFrame.height
+  );
 });
 
 window.onload = () => {
   canvasService.start();
+
+  document.getElementById("generate")?.addEventListener("click", () => {
+    canvasService.send("GENERATE");
+  });
 
   window.addEventListener("resize", canvasService.send);
   window.addEventListener("mousedown", canvasService.send);
