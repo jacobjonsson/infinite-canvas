@@ -7,10 +7,10 @@ const canvasContext = elCanvas.getContext("2d") as CanvasRenderingContext2D;
 elCanvas.width = elCanvas.offsetWidth;
 elCanvas.height = elCanvas.offsetHeight;
 
-const CELL_SIZE = 64;
+const CELL_SIZE = 32;
 
-const FRAME_HEIGHT = 200;
-const FRAME_WIDTH = 200;
+const FRAME_HEIGHT = 576;
+const FRAME_WIDTH = 576;
 
 interface Frame {
   x: number;
@@ -149,7 +149,6 @@ const machine = createMachine<CanvasMachineContext>(
         evt.preventDefault();
       },
       updateSize: (_) => {
-        console.log("RESIZE!");
         elCanvas.width = elCanvas.offsetWidth;
         elCanvas.height = elCanvas.offsetHeight;
       },
@@ -170,9 +169,7 @@ const machine = createMachine<CanvasMachineContext>(
           return { dragStart: ctx.dragStart };
         }
 
-        const transformedCursor = ctx.transform.inverse().transformPoint(new DOMPoint(evt.pageX, evt.pageY));
-
-        return { dragStart: transformedCursor };
+        return { dragStart: new DOMPoint(evt.pageX, evt.pageY) };
       }),
       generate: assign((ctx) => {
         const { x, y, width, height } = ctx.generationFrame;
@@ -195,11 +192,11 @@ const machine = createMachine<CanvasMachineContext>(
           return {};
         }
 
-        // This isn't working while zoomed in or out
-        const transformedCursor = ctx.transform.inverse().transformPoint(new DOMPoint(evt.pageX, evt.pageY));
+        const transformedDragStart = ctx.dragStart.matrixTransform(ctx.transform.inverse());
+        const transformedMousePoint = new DOMPoint(evt.pageX, evt.pageY).matrixTransform(ctx.transform.inverse());
 
-        const deltaX = transformedCursor.x - ctx.dragStart.x;
-        const deltaY = transformedCursor.y - ctx.dragStart.y;
+        const deltaX = transformedMousePoint.x - transformedDragStart.x;
+        const deltaY = transformedMousePoint.y - transformedDragStart.y;
 
         let x: number = ctx.oldGenerationFrame.x + deltaX;
         let y: number = ctx.oldGenerationFrame.y + deltaY;
@@ -209,8 +206,8 @@ const machine = createMachine<CanvasMachineContext>(
 
         return {
           generationFrame: {
-            x: x / ctx.transform.a,
-            y: y / ctx.transform.d,
+            x,
+            y,
             width: FRAME_WIDTH,
             height: FRAME_HEIGHT,
           },
@@ -224,12 +221,16 @@ const machine = createMachine<CanvasMachineContext>(
         const scaleAmount = Math.exp(-evt.deltaY / 100);
         const transformedCursor = ctx.transform.inverse().transformPoint(new DOMPoint(evt.pageX, evt.pageY));
 
-        return {
-          transform: ctx.transform
-            .translate(transformedCursor.x, transformedCursor.y)
-            .scale(scaleAmount)
-            .translate(-transformedCursor.x, -transformedCursor.y),
-        };
+        const transform = ctx.transform
+          .translate(transformedCursor.x, transformedCursor.y)
+          .scale(scaleAmount)
+          .translate(-transformedCursor.x, -transformedCursor.y);
+
+        if (transform.a < 0.1 || transform.a > 10) {
+          return {};
+        }
+
+        return { transform };
       }),
       updateOffset: assign((ctx, evt) => {
         if (isMouseMoveEvent(evt)) {
@@ -290,21 +291,21 @@ const isWheelEvent = (evt: AnyEventObject): evt is WheelEvent => {
 
 const canvasService = interpret(machine).onTransition((state) => {
   canvasContext.setTransform(1, 0, 0, 1, 0, 0);
-  canvasContext.fillStyle = "#575B6B";
+  canvasContext.fillStyle = "#1D1E23";
   canvasContext.fillRect(0, 0, elCanvas.width, elCanvas.height);
-
-  // Apply transformations without scaling for the grid
-  const gridTransform = state.context.transform.scale(1 / state.context.transform.a);
-  canvasContext.setTransform(gridTransform);
 
   // Draw the dotted grid
   canvasContext.beginPath();
   canvasContext.strokeStyle = "#B8B8B8";
   canvasContext.lineWidth = 2;
-  canvasContext.setLineDash([1, 32]);
+  canvasContext.setLineDash([1, CELL_SIZE]);
+
   for (let x = 0; x < state.context.width; x += CELL_SIZE) {
-    canvasContext.moveTo(x, 0);
-    canvasContext.lineTo(x, state.context.height);
+    const startX = CELL_SIZE + (state.context.transform.e % CELL_SIZE) + x;
+    const startY = CELL_SIZE + (state.context.transform.f % CELL_SIZE);
+
+    canvasContext.moveTo(startX - CELL_SIZE, startY - CELL_SIZE);
+    canvasContext.lineTo(startX - CELL_SIZE, state.context.height);
   }
   canvasContext.stroke();
 
@@ -315,7 +316,7 @@ const canvasService = interpret(machine).onTransition((state) => {
     canvasContext.drawImage(imageFrame.image, imageFrame.x, imageFrame.y, imageFrame.width, imageFrame.height);
   }
 
-  // Draw draggable box
+  // Draw the generation frame
   canvasContext.setLineDash([]);
   canvasContext.beginPath();
   canvasContext.fillStyle = "rgba(255, 255, 255, 0.10)";
@@ -337,6 +338,32 @@ const canvasService = interpret(machine).onTransition((state) => {
     state.context.generationFrame.width,
     state.context.generationFrame.height
   );
+
+  // Draw checkered board pattern
+  canvasContext.fillStyle = "#1D1E23";
+  canvasContext.fillRect(
+    state.context.generationFrame.x,
+    state.context.generationFrame.y,
+    state.context.generationFrame.width,
+    state.context.generationFrame.height
+  );
+  canvasContext.fillStyle = "#414550";
+
+  const numberOfCellsX = Math.ceil(state.context.generationFrame.width / 24);
+  const numberOfCellsY = Math.ceil(state.context.generationFrame.height / 24);
+
+  for (let x = 0; x < numberOfCellsX; x++) {
+    for (let y = 0; y < numberOfCellsY; y++) {
+      if ((x + y) % 2 === 0) {
+        canvasContext.fillRect(
+          state.context.generationFrame.x + x * 24,
+          state.context.generationFrame.y + y * 24,
+          24,
+          24
+        );
+      }
+    }
+  }
 });
 
 window.onload = () => {
